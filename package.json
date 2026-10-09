@@ -14,6 +14,14 @@
     "time-tracking"
   ],
   "main": "lib/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/namandhakad712/dsh-hackatime.git"
+  },
+  "bugs": {
+    "url": "https://github.com/namandhakad712/dsh-hackatime/issues"
+  },
+  "homepage": "https://github.com/namandhakad712/dsh-hackatime#readme",
   "exports": {
     ".": {
       "types": "./lib/index.d.ts",
