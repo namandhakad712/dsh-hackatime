@@ -1,0 +1,9 @@
+# dsh-hackatime bundle patch.
+#
+# Applied as a profile layer in dsh.profile.bundles order. This inserts the
+# hackatime plugin into the composition and routes nothing else — the plugin
+# only observes session events and posts heartbeats to Hackatime, so it needs
+# no seam repoint. Removing the plugin drops this layer cleanly.
+- insert:
+    - id: hackatime
+      name: 'dsh-hackatime'
