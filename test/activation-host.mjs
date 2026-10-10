@@ -51,16 +51,17 @@ if (modExports.inject.includes("connection")) {
 }
 
 // apply() with `settings` present and `connection` absent: the RPC registration
-// is lazy, so nothing may throw and activation must settle.
+// is lazy (it injects ["settings","connection"]), so nothing may throw and
+// activation must settle.
 const fakeCtx = {
 	inject: (services, fn) => {
-		if (services.every((s) => s === "settings")) return fn(fakeCtx);
+		if (services.every((s) => fakeCtx[s] !== undefined)) return fn(fakeCtx);
 		return () => {};
 	},
 	effect: (fn) => { fn(); return () => {}; },
 	on: () => () => {},
 	logger: { info() {}, warn() {}, error() {} },
-	settings: { register: () => {} },
+	settings: { register: () => {}, describe: () => [], update: async () => {}, mutate: async () => {} },
 };
 
 try {

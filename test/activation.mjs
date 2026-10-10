@@ -1,7 +1,9 @@
-// Proves the client half activates even when `settingsScope` is unavailable —
-// the exact condition that crashed boot at 0.2.0 ("waiting for service:
-// settingsScope"). Loads the real module factory the browser uses and drives
-// apply() with a minimal host that provides NO settingsScope/configForms.
+// Proves the client half registers its settings tab unconditionally — the fix
+// for the tab silently never appearing. The original code gated registration
+// behind ctx.inject(["configForms"])/["settingsScope"] callbacks that never
+// fire on a build lacking those services, so no tab rendered. The new code
+// registers settings.section directly in apply() (the dsh-pocket pattern) and
+// owns no config scope at all.
 import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
@@ -22,22 +24,15 @@ const fakeRequire = (name) => {
 	throw new Error(`unexpected require: ${name}`);
 };
 
-// window.__ModuleLoader__.load({id, factory}) — the browser entry shape.
-const moduleLoader = {
-	load(entry) { captured = entry; },
-};
+const moduleLoader = { load(entry) { captured = entry; } };
 globalThis.window = { __ModuleLoader__: moduleLoader };
-
-// Execute the client bundle exactly as the browser would.
 new Function("require", "window", src)(fakeRequire, globalThis.window);
 
 console.log("loader id:", captured.id);
-
-// The factory returns module.exports — invoke it the way the loader does.
 const exports = captured.factory(fakeRequire);
 console.log("exports.inject:", JSON.stringify(exports.inject));
 
-// The property that crashed 0.2.0: settingsScope must NOT be a hard dependency.
+// 0.2.0's crash: settingsScope must not be a hard dependency.
 if (exports.inject.includes("settingsScope")) {
 	console.log("FAIL: settingsScope is a hard inject — boot would hang");
 	process.exit(1);
@@ -47,21 +42,22 @@ if (exports.inject.includes("configForms")) {
 	process.exit(1);
 }
 
-// A context with neither settings service, and no connection/rpc. The old code
-// threw here; apply() must settle and register nothing harmful.
-const registered = [];
+// A context with NO settings service of any kind, and no connection. The tab
+// must still register — that is the whole point of the fix.
+const seats = [];
+const registrations = [];
 const ctx = {
 	slots: {
 		inject: (name, fn) => {
-			// Only seats that actually exist on this host get a registration.
-			registered.push(name);
+			seats.push(name);
 			return fn();
 		},
-		register: () => () => {},
+		register: (options, component) => {
+			registrations.push({ name: options.name, id: options.id ?? options.key, component });
+			return () => {};
+		},
 	},
 	inject: (services, fn) => {
-		// Lazy resolution: if the service is absent, the callback never runs —
-		// which is precisely the desired degradation, not a hang.
 		const present = services.filter((s) => ctx[s] !== undefined);
 		if (present.length === services.length) return fn(ctx);
 		return () => {};
@@ -71,17 +67,34 @@ const ctx = {
 	connection: undefined,
 };
 
-let threw = null;
 try {
 	exports.apply(ctx);
 } catch (error) {
-	threw = error;
-}
-
-if (threw) {
-	console.log("FAIL: apply() threw →", threw.message);
+	console.log("FAIL: apply() threw ->", error.message);
 	process.exit(1);
 }
 
-console.log("seats touched by lazy paths:", JSON.stringify([...new Set(registered)]));
-console.log("PASS: client half activates with no settingsScope, no configForms, no rpc");
+console.log("seats injected:", JSON.stringify([...new Set(seats)]));
+
+const section = registrations.find((r) => r.name === "settings.section");
+if (!section) {
+	console.log("FAIL: settings.section never registered without a settings service");
+	process.exit(1);
+}
+if (section.id !== "hackatime") {
+	console.log(`FAIL: settings.section registered with id ${JSON.stringify(section.id)}, expected "hackatime"`);
+	process.exit(1);
+}
+if (typeof section.component !== "function") {
+	console.log("FAIL: settings.section registered no render component");
+	process.exit(1);
+}
+
+// apply() must run its effect callbacks eagerly enough to register; confirm
+// every seat got a component, not just a slot injection.
+if (registrations.length < 3) {
+	console.log(`FAIL: expected 3 registrations, got ${registrations.length}`);
+	process.exit(1);
+}
+
+console.log(`PASS: settings.section "hackatime" registers with no settingsScope, no configForms, no rpc`);
