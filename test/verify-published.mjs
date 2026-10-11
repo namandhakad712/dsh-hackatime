@@ -23,10 +23,19 @@ const checks = [
 	["client: RPC config.set", c.includes("hackatime.config.set")],
 	["client: NO configForms gate", !c.includes('ctx.inject(["configForms"]')],
 	["client: NO settingsScope gate", !c.includes('ctx.inject(["settingsScope"]')],
+	["client: live-session panel", c.includes("Currently tracking")],
+	["client: update banner", c.includes("is available")],
+	["client: autoUpdate toggle", c.includes("autoUpdate")],
+	["client: how-to guide", c.includes("How to use it")],
 	["host: config.get endpoint", i.includes("hackatime.config.get")],
 	["host: config.set endpoint", i.includes("hackatime.config.set")],
 	["host: config.unset endpoint", i.includes("hackatime.config.unset")],
 	["host: volatile config fields", i.includes(".volatile()")],
+	["host: register guarded (0.1.7 fix)", i.includes("typeof cctx.settings.register === \"function\"")],
+	["host: guard wraps the real call", i.includes('if (typeof cctx.settings.register === "function") {\n')],
+	["host: version endpoint", i.includes("hackatime.version")],
+	["host: update endpoint", i.includes("hackatime.update")],
+	["host: live-session view", i.includes("status.session")],
 ];
 
 let failed = 0;

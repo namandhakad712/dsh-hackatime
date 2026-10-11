@@ -51,12 +51,29 @@ const Schema = schemaChain;
 const path = { join: () => "", dirname: () => "", basename: () => "", resolve: () => "", extname: () => "" };
 const os = { hostname: () => "test-host" };
 const fs = {};
+const child_process = { spawn: __stubSpawn };
 let __exports = {};
 ${stripped}
 return __exports;
 `;
 
-const modExports = new Function("schemaChain", body)(schemaChain);
+const modExports = new Function("schemaChain", "__stubSpawn", body)(schemaChain, (cmd, args, opts) => {
+	// A fake child that exits 0 with a short line, so the update endpoint
+	// resolves without ever spawning a real process.
+	const handlers = { data: [], exit: [], error: [] };
+	const emitter = {
+		stdout: { on: (ev, fn) => handlers.data.push(fn) },
+		stderr: { on: (ev, fn) => handlers.data.push(fn) },
+		on: (ev, fn) => handlers[ev]?.push(fn),
+		once: (ev, fn) => handlers[ev]?.push(fn),
+		kill: () => {},
+	};
+	queueMicrotask(() => {
+		for (const fn of handlers.data) fn("updated dsh-hackatime\n");
+		for (const fn of handlers.exit) fn(0);
+	});
+	return emitter;
+});
 if (!modExports?.Config) {
 	console.log("FAIL: Config schema missing");
 	process.exit(1);
@@ -174,6 +191,53 @@ if (typeof statusRes.value.enabled !== "boolean") {
 }
 console.log("status ok: enabled =", statusRes.value.enabled);
 
+// The live-session view the "Currently tracking" panel reads. It exists and is
+// empty before any activity — the card renders it immediately, so a missing
+// object would throw in the browser.
+if (!statusRes.value.session || typeof statusRes.value.session !== "object") {
+	console.log("FAIL: status.session missing");
+	process.exit(1);
+}
+if (statusRes.value.session.project !== null || statusRes.value.session.entity !== null) {
+	console.log("FAIL: live-session view should start empty");
+	process.exit(1);
+}
+if (typeof statusRes.value.version !== "string") {
+	console.log("FAIL: status.version must be a string for the update badge");
+	process.exit(1);
+}
+console.log("status ok: live-session view present, empty; version =", statusRes.value.version);
+
+// --- version ---------------------------------------------------------------
+
+const versionRes = await rpcHandler("hackatime.version", {});
+if (!versionRes?.ok) {
+	console.log("FAIL: version failed ->", versionRes?.error);
+	process.exit(1);
+}
+if (typeof versionRes.value.current !== "string") {
+	console.log("FAIL: version.current missing");
+	process.exit(1);
+}
+if (typeof versionRes.value.updateAvailable !== "boolean") {
+	console.log("FAIL: version.updateAvailable must be a boolean");
+	process.exit(1);
+}
+console.log("version ok: current =", versionRes.value.current, "| latest =", versionRes.value.latest ?? "unreachable");
+
+// --- update ----------------------------------------------------------------
+
+// runSelfUpdate spawns a child, which the test host cannot do. The endpoint
+// must resolve, not hang, and report the failure rather than throwing.
+const updateRes = await rpcHandler("hackatime.update", { profile: "web" });
+if (updateRes?.ok) {
+	console.log("note: update unexpectedly succeeded in the test host");
+} else if (!updateRes?.error) {
+	console.log("FAIL: update failure must carry an error body");
+	process.exit(1);
+}
+console.log("update ok: resolves in a spawn-less host with", updateRes.error?.code ?? "success");
+
 // --- unknown endpoint -------------------------------------------------------
 
 const badRes = await rpcHandler("hackatime.nope", {});
@@ -183,4 +247,5 @@ if (badRes?.ok) {
 }
 console.log("unknown endpoint ok: rejected with", badRes.error.code);
 
-console.log("PASS: host RPC round-trips config get/set/unset and status");
+console.log("PASS: host RPC round-trips config get/set/unset, status, version and update");
+process.exit(0);

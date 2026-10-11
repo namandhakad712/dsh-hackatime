@@ -50,6 +50,18 @@ or open **Settings → Plugins → Hackatime** in DSH and fill in the fields.
 | `sendEntityPath` | `true` | Send the full file path as `entity`. Turn this off for privacy; the workspace folder name is sent instead. |
 | `sendAiUsage` | `true` | Send `ai_model`, `ai_input_tokens` and `ai_output_tokens` on heartbeats that carry them. |
 | `debug` | `false` | Log every heartbeat to the host console. |
+| `autoUpdate` | `true` | Install the newest published `dsh-hackatime` automatically. Turn it off to update manually from the settings tab. |
+
+## The settings tab
+
+**Settings → Plugins → Hackatime** shows live tracking, not just a form:
+
+- **Connection** — whether the server is reachable, how many heartbeats have landed, and a link to your dashboard.
+- **Currently tracking** — the project, file, model and session the plugin is timing right now, with a Live/Idle pill. This is the answer to "is it actually tracking me?".
+- **Settings** — every field above, autofilled from your stored config and editable inline.
+- **How to use it** — the setup walkthrough, on the page.
+
+When a newer version is published, the tab shows a banner (`v1.2.3 is available`) with an **Update now** button. With `autoUpdate` on, the host installs it on its own.
 
 ## What gets recorded
 

@@ -72,3 +72,56 @@ try {
 }
 
 console.log("PASS: host half activates with settings only; connection stays lazy");
+
+// --- the 0.1.7 regression -----------------------------------------------
+
+// dsh >= 0.1.7 (#677) derives namespaces from a plugin's Config schema and
+// deleted `register` from the settings service. Calling it anyway throws a
+// TypeError cordis swallows — which killed the whole inject callback before
+// `rpc.handle` ran, so the settings card saw no status and no config. This is
+// the exact condition the user's empty page was in.
+const noRegisterCtx = {
+	inject: (services, fn) => {
+		if (services.every((s) => noRegisterCtx[s] !== undefined)) return fn(noRegisterCtx);
+		return () => {};
+	},
+	effect: (fn) => { fn(); return () => {}; },
+	on: () => () => {},
+	logger: { info() {}, warn() {}, error() {} },
+	// No `register` key at all — Object.hasOwn is false, typeof is undefined.
+	settings: { describe: () => [], update: async () => {}, mutate: async () => {} },
+	connection: {
+		rpc: {
+			handle: (channel, handler) => {
+				noRegisterCtx.__capturedChannel = channel;
+				noRegisterCtx.__capturedHandler = handler;
+				return () => {};
+			},
+		},
+	},
+};
+
+try {
+	modExports.apply(noRegisterCtx, { enabled: true, autoUpdate: false });
+} catch (error) {
+	console.log("FAIL: apply() threw on a register-less settings service ->", error.message);
+	process.exit(1);
+}
+
+if (noRegisterCtx.__capturedChannel !== "/dsh-hackatime" || typeof noRegisterCtx.__capturedHandler !== "function") {
+	console.log("FAIL: rpc.handle never ran — the settings card would be dead");
+	process.exit(1);
+}
+
+// The handler must still serve endpoints without register having been called.
+const res = await noRegisterCtx.__capturedHandler("hackatime.status", {});
+if (!res?.ok || typeof res?.value?.enabled !== "boolean") {
+	console.log("FAIL: status endpoint dead on a register-less host");
+	process.exit(1);
+}
+if (res.value.session?.project !== null) {
+	console.log("FAIL: live-session view should start empty");
+	process.exit(1);
+}
+
+console.log("PASS: RPC registers and serves on a register-less (dsh >= 0.1.7) settings service");
