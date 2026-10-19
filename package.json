@@ -1,6 +1,6 @@
 {
   "name": "dsh-hackatime",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Track your DeepSeek Harness coding time on Hackatime (WakaTime-compatible heartbeats).",
   "author": "Hackatime DSH Plugin",
   "license": "MIT",
@@ -39,6 +39,9 @@
     "cordis.patch.yml",
     "icon.svg",
     "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "docs",
     "LICENSE"
   ],
   "dsh": {

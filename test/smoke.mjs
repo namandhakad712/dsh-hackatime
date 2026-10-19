@@ -43,7 +43,7 @@ const entity = path.join(BASE, "Projects", "Hackatime-dsh", "lib", "index.js");
 const heartbeat = {
 	entity,
 	type: "file",
-	category: "coding",
+	category: "ai coding",
 	time: Math.floor(Date.now() / 1000),
 	is_write: true,
 	project: "Hackatime-dsh",

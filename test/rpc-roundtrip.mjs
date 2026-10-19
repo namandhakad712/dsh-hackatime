@@ -97,6 +97,10 @@ const settingsService = {
 	register: () => {},
 	describe: () => [{ ns: "hackatime", value: { ...store }, revision: 1 }],
 	update: async (ns, patch) => { Object.assign(store, patch); },
+	replace: async (ns, section) => {
+		for (const key of Object.keys(store)) Reflect.deleteProperty(store, key);
+		Object.assign(store, section);
+	},
 	mutate: async (ns, ops) => {
 		for (const op of ops) {
 			if (op.op === "unset") delete store[op.path];
@@ -142,11 +146,14 @@ if (!getRes?.ok) {
 	console.log("FAIL: config.get failed ->", getRes?.error);
 	process.exit(1);
 }
-if (getRes.value.apiKey !== "cfg-key") {
-	console.log(`FAIL: config.get returned apiKey ${JSON.stringify(getRes.value.apiKey)}, expected "cfg-key"`);
+// The API key is write-only on the RPC read path: it must be masked out so a
+// plaintext response never carries the stored secret. The card learns "is a
+// key set?" from the status payload instead.
+if (getRes.value.apiKey !== "") {
+	console.log(`FAIL: config.get must mask the apiKey, got ${JSON.stringify(getRes.value.apiKey)}`);
 	process.exit(1);
 }
-console.log("config.get ok: apiKey =", getRes.value.apiKey, "| enabled =", getRes.value.enabled);
+console.log("config.get ok: apiKey masked | enabled =", getRes.value.enabled);
 
 // --- config.set -------------------------------------------------------------
 
@@ -155,8 +162,9 @@ if (!setRes?.ok) {
 	console.log("FAIL: config.set failed ->", setRes?.error);
 	process.exit(1);
 }
-if (setRes.value.apiKey !== "new-key" || setRes.value.project !== "my-proj") {
-	console.log("FAIL: config.set did not echo merged values");
+// The write path lands in the store, but the response masks the secret too.
+if (setRes.value.apiKey !== "" || setRes.value.project !== "my-proj") {
+	console.log("FAIL: config.set did not echo merged values (or leaked the key)");
 	process.exit(1);
 }
 if (store.apiKey !== "new-key" || store.project !== "my-proj") {
@@ -177,6 +185,144 @@ if (store.project !== undefined) {
 	process.exit(1);
 }
 console.log("config.unset ok: project removed");
+
+// --- config.set falling back to the Loader entry ----------------------------
+
+// The packaged host boots from app.asar while profile plugins resolve
+// @deepseek-ai/dsh-app-app-boot from the profile's own node_modules — two module
+// instances, two module-level WeakMaps, so configEditor.edit's
+// reconcileProfilePatches throws "profile reload requires the root Include
+// entry" for every plugin. When settings.update fails, config.set must fall
+// back to applying the patch through the Loader entry instead of surfacing the
+// error to the card.
+let loaderEntryConfig = null;
+/** Faithful stand-in for cordis-plugin-loader's Entry.update: it merges the new
+ * options into `this.options` (deleting null/undefined) and records the config
+ * it was asked to apply. */
+const loaderEntry = {
+	options: { id: "hackatime", name: "dsh-hackatime" },
+	parent: { tree: { ctx: { fiber: { entry: { id: "include" } } } } },
+	update: async (options) => {
+		if (options?.config === undefined) return;
+		const config = { ...(loaderEntry.options.config ?? {}) };
+		for (const [key, value] of Object.entries(options.config)) {
+			if (value === null || value === undefined) Reflect.deleteProperty(config, key);
+			else config[key] = value;
+		}
+		loaderEntry.options.config = config;
+		loaderEntryConfig = config;
+	},
+};
+const brokenSettings = {
+	...settingsService,
+	update: async () => { throw new Error("dsh: profile reload requires the root Include entry"); },
+	replace: async () => { throw new Error("dsh: profile reload requires the root Include entry"); },
+};
+
+/** Build a context whose inject stub resolves against itself, so each apply()
+ * sees its own settings service and its own RPC capture. */
+const makeCtx = (overrides) => {
+	const ctx = {
+		effect: (fn) => { fn(); return () => {}; },
+		on: () => () => {},
+		logger: { info() {}, warn() {}, error() {} },
+		...overrides,
+	};
+	ctx.inject = (services, fn) => {
+		if (services.every((s) => ctx[s] !== undefined)) return fn(ctx);
+		return () => {};
+	};
+	return ctx;
+};
+
+let fallbackHandler = null;
+const fallbackCtx = makeCtx({
+	settings: brokenSettings,
+	root: { loader: { entries: () => [loaderEntry] } },
+	connection: { rpc: { handle: (channel, handler) => { fallbackHandler = handler; return () => {}; } } },
+});
+modExports.apply(fallbackCtx, { ...store });
+if (typeof fallbackHandler !== "function") {
+	console.log("FAIL: fallback RPC handler not registered");
+	process.exit(1);
+}
+
+const fallbackSet = await fallbackHandler("hackatime.config.set", { project: "fallback-proj" });
+if (!fallbackSet?.ok) {
+	console.log("FAIL: config.set did not fall back to the Loader entry ->", fallbackSet?.error);
+	process.exit(1);
+}
+if (loaderEntryConfig?.project !== "fallback-proj") {
+	console.log("FAIL: the Loader entry never received the patch");
+	process.exit(1);
+}
+// The merge must build on the entry's raw override, not the resolved values, so
+// unset keys keep inheriting schema defaults instead of being pinned by the write.
+if (loaderEntryConfig.rateLimitSeconds !== undefined) {
+	console.log("FAIL: fallback pinned an unset key instead of leaving it inherited");
+	process.exit(1);
+}
+console.log("config.set fallback ok: applied through the Loader entry when settings.update throws");
+
+// A second patch layers on top of the first rather than resetting the override.
+const fallbackSet2 = await fallbackHandler("hackatime.config.set", { apiKey: "second-key" });
+if (!fallbackSet2?.ok || loaderEntryConfig?.apiKey !== "second-key" || loaderEntryConfig?.project !== "fallback-proj") {
+	console.log("FAIL: a second fallback patch did not layer onto the existing override");
+	process.exit(1);
+}
+console.log("config.set fallback ok: later patches layer onto the stored override");
+
+// A null value clears the key (the card sends null for "use the default").
+const fallbackSet3 = await fallbackHandler("hackatime.config.set", { project: null });
+if (!fallbackSet3?.ok || loaderEntryConfig.project !== undefined) {
+	console.log("FAIL: null patch did not clear the key");
+	process.exit(1);
+}
+console.log("config.set fallback ok: null clears the key");
+
+// A schema-rejected value must never reach the profile file.
+const rejectingEntry = {
+	options: { id: "hackatime", name: "dsh-hackatime" },
+	parent: { tree: { ctx: { fiber: { entry: { id: "include" } } } } },
+	update: async () => { throw new Error("rateLimitSeconds must be between 5 and 600"); },
+};
+let rejectingHandler = null;
+const rejectingCtx = makeCtx({
+	settings: brokenSettings,
+	root: { loader: { entries: () => [rejectingEntry] } },
+	connection: { rpc: { handle: (channel, handler) => { rejectingHandler = handler; return () => {}; } } },
+});
+modExports.apply(rejectingCtx, { ...store });
+const rejected = await rejectingHandler("hackatime.config.set", { rateLimitSeconds: 1 });
+if (rejected?.ok) {
+	console.log("FAIL: a schema-rejected write was reported as success");
+	process.exit(1);
+}
+if (!rejected?.error?.message?.includes("between 5 and 600")) {
+	console.log("FAIL: schema rejection did not surface the reason ->", rejected?.error?.message);
+	process.exit(1);
+}
+console.log("config.set fallback ok: schema violations are reported, never persisted");
+
+// When the Loader is unreachable too, the card must get a clear combined error
+// rather than a silent success or an unhandled rejection.
+let noLoaderHandler = null;
+const noLoaderCtx = makeCtx({
+	settings: brokenSettings,
+	root: {},
+	connection: { rpc: { handle: (channel, handler) => { noLoaderHandler = handler; return () => {}; } } },
+});
+modExports.apply(noLoaderCtx, { ...store });
+const bothFail = await noLoaderHandler("hackatime.config.set", { project: "x" });
+if (bothFail?.ok) {
+	console.log("FAIL: config.set reported success when every write path failed");
+	process.exit(1);
+}
+if (!bothFail?.error?.message?.includes("profile reload")) {
+	console.log("FAIL: combined error lost the primary cause ->", bothFail?.error?.message);
+	process.exit(1);
+}
+console.log("config.set failure ok: reports the primary cause plus the fallback failure");
 
 // --- status -----------------------------------------------------------------
 

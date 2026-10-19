@@ -10,5 +10,7 @@ npm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+.dsh-vision-router
+test
 
 # Test artifacts are committed; package.json `files` keeps them out of the npm tarball.

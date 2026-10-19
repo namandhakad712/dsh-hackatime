@@ -11,6 +11,7 @@ export interface Config {
 	sendEntityPath: boolean;
 	sendAiUsage: boolean;
 	debug: boolean;
+	autoUpdate: boolean;
 }
 
 /** Stable Loader identity. */
