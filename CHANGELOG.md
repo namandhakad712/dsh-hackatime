@@ -4,6 +4,19 @@ All notable changes to `dsh-hackatime` are documented here. Versions follow the
 `dsh-hackatime` npm package; the DeepSeek Harness editor addition to Hackatime
 itself lives in the `hackclub/hackatime` pull request.
 
+## 0.5.1
+
+- **Cute live tracking header widget.** Added live tracking widget to `conversation.session.header.utilities` (top right of conversation view). Shows pulsing 💓 and today's coding time when active, or ⏱ when idle; clicking it opens your Hackatime dashboard.
+- **Fixed Save button & Enter key submission.** Wrapped settings in interactive forms so pressing Enter immediately commits drafts. Fixed disabled-state deadlock so fields and Save button are immediately responsive.
+- **Cleaned sidebar label.** Removed redundant watch emoji from the settings section navigation label (`Hackatime` instead of `⏱ Hackatime`) to prevent dual-icon clutter next to DSH's settings gear.
+- **Rock-solid RPC transport.** Fixed route-handler exception and dual-registered both `webServer` prefix route and `connection.rpc.handle` so all transports (web, desktop Electron IPC, headless) connect seamlessly.
+
+## 0.5.0
+
+- **Weekly coding time graph.** Real-time 7-day bar chart with daily hours and gradient fill pulling server-side summaries.
+- **Background self-update.** Detached update job streaming live progress from pnpm so users can navigate away during updates.
+- **Official DeepSeek whale logo.** Fully vectorized official logo across all UI, docs, and banner assets.
+
 ## 0.4.0
 
 Redesign of the settings tab around the single job a new user has — paste a key,

@@ -12,5 +12,6 @@ npm-debug.log*
 Thumbs.db
 .dsh-vision-router
 test
+test/.preview
 
 # Test artifacts are committed; package.json `files` keeps them out of the npm tarball.

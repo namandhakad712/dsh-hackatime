@@ -52,6 +52,7 @@ const path = { join: () => "", dirname: () => "", basename: () => "", resolve: (
 const os = { hostname: () => "test-host" };
 const fs = {};
 const child_process = { spawn: __stubSpawn };
+const nodeSpawn = child_process.spawn;
 let __exports = {};
 ${stripped}
 return __exports;
@@ -393,5 +394,69 @@ if (badRes?.ok) {
 }
 console.log("unknown endpoint ok: rejected with", badRes.error.code);
 
-console.log("PASS: host RPC round-trips config get/set/unset, status, version and update");
+// --- summaries + update progress ---------------------------------------------
+// The graph endpoint never leaks a key through and fails closed without one;
+// the progress endpoint always answers, idle or otherwise. fetch is stubbed
+// so the unit suite never touches the network.
+
+const realFetch = globalThis.fetch;
+const fetchCalls = [];
+globalThis.fetch = async (url, init) => {
+	fetchCalls.push({ url: String(url), hasAuth: Boolean(init?.headers?.Authorization) });
+	return { ok: false, status: 503, text: async () => "stubbed" };
+};
+try {
+	const sumRes = await rpcHandler("hackatime.summaries", {});
+	const sumText = JSON.stringify(sumRes);
+	if (sumText.includes("api_key") || sumText.includes("Bearer") || /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.test(sumText)) {
+		console.log("FAIL: summaries leaked a credential-looking value ->", sumText.slice(0, 200));
+		process.exit(1);
+	}
+	if (sumRes?.ok || sumRes?.error?.code !== "summaries-failed") {
+		console.log("FAIL: summaries must surface a fetch failure ->", JSON.stringify(sumRes));
+		process.exit(1);
+	}
+	// The one outbound call must carry the key server-side, and its URL must
+	// be the summaries endpoint on the configured base, never anywhere else.
+	if (fetchCalls.length !== 1 || !fetchCalls[0].hasAuth || !fetchCalls[0].url.includes("/users/current/summaries")) {
+		console.log("FAIL: summaries did not fetch the right endpoint with auth ->", JSON.stringify(fetchCalls));
+		process.exit(1);
+	}
+	console.log("summaries ok: fetches the summaries endpoint with the key, error surfaces no secret");
+} finally {
+	globalThis.fetch = realFetch;
+}
+
+// The update job must survive the fire-and-forget start: the endpoint answers
+// immediately with a started flag, not a resolved install.
+const startRes = await rpcHandler("hackatime.update", {});
+if (!startRes?.ok) {
+	console.log("FAIL: update start rejected ->", JSON.stringify(startRes));
+	process.exit(1);
+}
+const progRes = await rpcHandler("hackatime.update.progress", {});
+if (!progRes?.ok || !progRes.value) {
+	console.log("FAIL: progress endpoint must always answer ->", JSON.stringify(progRes));
+	process.exit(1);
+}
+if (!["running", "done", "failed"].includes(progRes.value.status)) {
+	console.log("FAIL: progress reported an unknown status ->", JSON.stringify(progRes.value));
+	process.exit(1);
+}
+// The progress endpoint must keep answering through a second start (the
+// collapse happens host-side when a job is genuinely in flight; asserting
+// the race here would be flaky, so only the invariant is tested).
+const secondRes = await rpcHandler("hackatime.update", {});
+if (!secondRes?.ok) {
+	console.log("FAIL: second update start rejected ->", JSON.stringify(secondRes));
+	process.exit(1);
+}
+const finalProg = await rpcHandler("hackatime.update.progress", {});
+if (!finalProg?.ok || !["running", "done", "failed"].includes(finalProg.value.status)) {
+	console.log("FAIL: progress endpoint stopped answering after a second start ->", JSON.stringify(finalProg));
+	process.exit(1);
+}
+console.log("update ok: started, progress keeps polling through a second start");
+
+console.log("PASS: host RPC round-trips config get/set/unset, status, version, summaries and update");
 process.exit(0);
